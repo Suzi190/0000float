@@ -26,6 +26,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check site URL
+        run: |
+          if [ -z "$SHELL_SITE_URL" ]; then
+            echo "::error::请先在仓库 Variables 配置 SHELL_SITE_URL，或手动运行工作流时填写 site_url"
+            exit 1
+          fi
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -41,13 +48,6 @@ jobs:
       - uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: "8.7"
-
-      - name: Check site URL
-        run: |
-          if [ -z "$SHELL_SITE_URL" ]; then
-            echo "::error::请先在仓库 Variables 配置 SHELL_SITE_URL，或手动运行工作流时填写 site_url"
-            exit 1
-          fi
 
       - name: Decode keystore (optional)
         if: ${{ env.SHELL_KEYSTORE_BASE64 != '' }}
