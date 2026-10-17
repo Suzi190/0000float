@@ -26,8 +26,9 @@
 仓库根目录已带工作流 `.github/workflows/android-shell.yml`：
 
 1. 在仓库 **Settings → Secrets and variables → Actions → Variables** 新建
-   `SHELL_SITE_URL`，值为你的 HTTPS 站点地址。手动运行工作流时也可以临时填写
-   `site_url`，它会覆盖仓库变量。没有配置时工作流会直接报错，避免产出白屏包。
+   `SHELL_SITE_URL`，值为你的 HTTPS 站点地址（同名 Secret 也兼容）。手动运行
+   工作流时也可以临时填写 `site_url`，它会覆盖仓库变量。没有配置时工作流会
+   直接报错，避免产出白屏包。
 2. GitHub 仓库页 → **Actions** → **Build Android Shell APK** → **Run workflow**。
    （改动 `ai-virtual-phone-main/android-shell/**` 并推到 main 也会自动触发。）
 3. 跑完后在该次运行的 **Artifacts** 里下载：
