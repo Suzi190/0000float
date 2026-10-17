@@ -20,9 +20,10 @@ class CallActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         CallAlert.stop(context)
         if (intent.action != ACTION_ANSWER) return
+        val siteUrl = ShellConfig.resolve(context) ?: return
         val sessionId = intent.getStringExtra(EXTRA_SESSION_ID).orEmpty()
         val callTs = intent.getLongExtra(EXTRA_CALL_TS, 0L).takeIf { it > 0 } ?: System.currentTimeMillis()
-        val target = "${MainActivity.SITE_URL}/#incoming-call=${android.net.Uri.encode(sessionId)}&rt=$callTs&answered=1"
+        val target = "$siteUrl/#incoming-call=${android.net.Uri.encode(sessionId)}&rt=$callTs&answered=1"
         runCatching {
             context.startActivity(
                 Intent(context, MainActivity::class.java).apply {

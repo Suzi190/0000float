@@ -42,6 +42,8 @@ class PushService : Service() {
 
         fun start(context: Context) {
             if (running) return
+            // 还没配置站点地址时不启动，避免空地址下反复请求和常驻通知。
+            if (ShellConfig.resolve(context) == null) return
             val intent = Intent(context, PushService::class.java)
             if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(intent)
             else context.startService(intent)
@@ -58,6 +60,7 @@ class PushService : Service() {
     private var msgSeq = 2
     private var notifId = 100
     private var shellSubRegistered = false
+    private var lastSiteUrl: String? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -101,11 +104,17 @@ class PushService : Service() {
 
     /** 借 WebView 的登录 Cookie 调站点接口获取连接参数。 */
     private fun fetchConfig(): PushConfig? = runCatching {
-        val cookie = CookieManager.getInstance().getCookie(MainActivity.SITE_URL) ?: return null
+        val siteUrl = ShellConfig.resolve(this) ?: return null
+        // 用户在「站点设置」里换了地址时，重新注册一次 shell 订阅。
+        if (siteUrl != lastSiteUrl) {
+            lastSiteUrl = siteUrl
+            shellSubRegistered = false
+        }
+        val cookie = CookieManager.getInstance().getCookie(siteUrl) ?: return null
 
         fun getJson(path: String): JSONObject? {
             val request = Request.Builder()
-                .url("${MainActivity.SITE_URL}$path")
+                .url("$siteUrl$path")
                 .header("Cookie", cookie)
                 .header("Accept", "application/json")
                 .build()
@@ -134,6 +143,7 @@ class PushService : Service() {
      */
     private fun registerShellSubscription(cookie: String, userId: String) {
         if (shellSubRegistered) return
+        val siteUrl = ShellConfig.resolve(this) ?: return
         runCatching {
             val body = JSONObject()
                 .put("endpoint", "shell:$userId")
@@ -144,7 +154,7 @@ class PushService : Service() {
                 .toString()
                 .toRequestBody("application/json".toMediaType())
             val request = Request.Builder()
-                .url("${MainActivity.SITE_URL}/api/push/subscribe")
+                .url("$siteUrl/api/push/subscribe")
                 .header("Cookie", cookie)
                 .post(body)
                 .build()

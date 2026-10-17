@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="site_settings"
+        android:enabled="true"
+        android:icon="@drawable/appicon"
+        android:shortcutShortLabel="@string/site_settings_short"
+        android:shortcutLongLabel="@string/site_settings_long">
+        <intent
+            android:action="app.floatphone.shell.EDIT_SITE"
+            android:targetPackage="app.floatphone.shell"
+            android:targetClass="app.floatphone.shell.MainActivity" />
+    </shortcut>
+</shortcuts>

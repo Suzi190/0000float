@@ -6,7 +6,9 @@ plugins {
 // 签名：CI 里通过环境变量注入 keystore（见 android-shell/README.md）；
 // 没有配置时 release 构建产出未签名 APK，debug 构建始终可直接安装测试。
 def ksFile = System.getenv("SHELL_KEYSTORE_FILE")
-def siteUrl = (System.getenv("SHELL_SITE_URL") ?: "https://example.invalid").replaceAll('/+$', '')
+// 可选：构建时预置站点地址。留空时 APK 首次启动会要求用户填写一次，
+// 因此 GitHub Actions 不配置 SHELL_SITE_URL 也能产出可用包。
+def siteUrl = (System.getenv("SHELL_SITE_URL") ?: "").replaceAll('/+$', '')
 
 android {
     namespace 'app.floatphone.shell'

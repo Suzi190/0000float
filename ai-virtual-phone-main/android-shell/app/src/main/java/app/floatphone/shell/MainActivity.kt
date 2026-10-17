@@ -2,6 +2,7 @@ package app.floatphone.shell
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.app.AlertDialog
 import android.app.DownloadManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -17,16 +18,21 @@ import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
 import android.provider.Settings
+import android.text.InputType
 import android.util.Base64
+import android.view.ViewGroup
 import android.view.WindowManager
 import android.webkit.CookieManager
 import android.webkit.DownloadListener
 import android.webkit.JavascriptInterface
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
@@ -48,13 +54,18 @@ import java.io.OutputStream
 class MainActivity : AppCompatActivity() {
 
     companion object {
-        val SITE_URL: String = BuildConfig.SITE_URL
         const val VERSION = "1.0.0"
-        /** 来电接听等场景的站内深链（必须以 SITE_URL 开头，否则忽略） */
+        /** 来电接听等场景的站内深链（必须以当前站点地址开头，否则忽略） */
         const val EXTRA_OPEN_URL = "open_url"
+        /** 桌面长按图标 →「站点设置」快捷方式使用的 action */
+        const val ACTION_EDIT_SITE = "app.floatphone.shell.EDIT_SITE"
     }
 
     private lateinit var webView: WebView
+    /** 当前站点地址；null 表示还没配置，需要先弹输入框。 */
+    private var siteUrl: String? = null
+    private var siteSetupDialog: AlertDialog? = null
+    private var siteErrorShown = false
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
 
     /** 页面加载完后注入的壳增强脚本（通知转发、键盘避让、blob 导出）。 */
@@ -139,6 +150,9 @@ class MainActivity : AppCompatActivity() {
         // 不设的话短音频没在播时按键调的是铃声，用户感觉"音量键无效、声音巨大"
         volumeControlStream = AudioManager.STREAM_MUSIC
 
+        // 用户填写过的地址优先；没有就用构建时注入的值；两者都没有则首次启动弹窗填写。
+        siteUrl = ShellConfig.resolve(this)
+
         webView = WebView(this)
         setContentView(webView)
 
@@ -156,6 +170,23 @@ class MainActivity : AppCompatActivity() {
         webView.addJavascriptInterface(ShellBridge(), "AndroidShell")
 
         webView.webViewClient = object : WebViewClient() {
+            override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
+                super.onPageStarted(view, url, favicon)
+                siteErrorShown = false
+            }
+
+            override fun onReceivedError(
+                view: WebView,
+                request: WebResourceRequest,
+                error: WebResourceError,
+            ) {
+                super.onReceivedError(view, request, error)
+                // 只处理主文档失败（DNS/断网/地址写错），子资源失败不打扰用户。
+                if (!request.isForMainFrame || siteErrorShown) return
+                siteErrorShown = true
+                showSiteError(error.description?.toString().orEmpty())
+            }
+
             override fun onPageFinished(view: WebView, url: String) {
                 super.onPageFinished(view, url)
                 // 壳增强脚本必须等页面 DOM 就绪后再注入；SPA 路由切换不会
@@ -168,7 +199,8 @@ class MainActivity : AppCompatActivity() {
                 val scheme = url.scheme ?: return false
                 // 站内导航留在壳里；http(s) 外链和自定义协议（shortcuts:// 等）交给系统
                 if (scheme == "http" || scheme == "https") {
-                    if (url.host == Uri.parse(SITE_URL).host) return false
+                    val rootHost = siteUrl?.let { Uri.parse(it).host }
+                    if (rootHost != null && url.host == rootHost) return false
                     return runCatching {
                         startActivity(Intent(Intent.ACTION_VIEW, url)); true
                     }.getOrDefault(true)
@@ -251,9 +283,17 @@ class MainActivity : AppCompatActivity() {
             }
         })
 
-        // 冷启动带深链（如来电接听）直接加载目标；否则加载首页
-        webView.loadUrl(consumeOpenUrl(intent) ?: SITE_URL)
-        ensurePushService()
+        // 冷启动带深链（如来电接听）直接加载目标；否则加载首页。
+        // 两者都没有时（CI 未注入地址且用户没填过），先弹首次配置框。
+        val editRequested = intent?.action == ACTION_EDIT_SITE
+        val startUrl = consumeOpenUrl(intent) ?: siteUrl
+        if (startUrl != null) {
+            webView.loadUrl(startUrl)
+            ensurePushService()
+            if (editRequested) showSiteSetup(exitOnCancel = false)
+        } else {
+            showSiteSetup(exitOnCancel = true)
+        }
     }
 
     /** 隐藏系统状态栏；用户从顶部上滑时临时出现，松手/失焦后再次隐藏。 */
@@ -279,6 +319,10 @@ class MainActivity : AppCompatActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        if (intent.action == ACTION_EDIT_SITE) {
+            showSiteSetup(exitOnCancel = siteUrl == null)
+            return
+        }
         val target = consumeOpenUrl(intent) ?: return
         // SPA 已加载：loadUrl 到同页 hash 只触发 hashchange，不会整页重载
         webView.loadUrl(target)
@@ -287,10 +331,98 @@ class MainActivity : AppCompatActivity() {
     private fun consumeOpenUrl(intent: Intent?): String? {
         val target = intent?.getStringExtra(EXTRA_OPEN_URL) ?: return null
         intent.removeExtra(EXTRA_OPEN_URL)
-        return target.takeIf { it.startsWith(SITE_URL) }
+        val base = siteUrl ?: return null
+        val targetUri = runCatching { Uri.parse(target) }.getOrNull() ?: return null
+        val baseUri = runCatching { Uri.parse(base) }.getOrNull() ?: return null
+        // 只接受同 scheme + 同 host 的站内深链，避免前缀伪装成 host.evil.com。
+        return target.takeIf {
+            targetUri.scheme == baseUri.scheme && targetUri.host == baseUri.host
+        }
+    }
+
+    /** 首次启动或长按图标「站点设置」时填写/修改站点地址。 */
+    private fun showSiteSetup(exitOnCancel: Boolean) {
+        siteSetupDialog?.takeIf { it.isShowing }?.dismiss()
+
+        val input = EditText(this).apply {
+            hint = "https://你的域名"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+            setSingleLine(true)
+            setText(siteUrl.orEmpty())
+            setSelection(text.length)
+        }
+        val pad = (20 * resources.displayMetrics.density).toInt()
+        val container = FrameLayout(this).apply {
+            setPadding(pad, pad / 2, pad, 0)
+            addView(
+                input,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+        }
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(if (siteUrl == null) "填写站点地址" else "站点设置")
+            .setMessage("请输入 Float 小手机的线上地址，必须是以 https:// 开头的网址。")
+            .setView(container)
+            .setCancelable(!exitOnCancel)
+            .setPositiveButton("保存并打开", null)
+            .setNegativeButton(if (exitOnCancel) "退出" else "取消", null)
+            .create()
+        siteSetupDialog = dialog
+
+        dialog.setOnShowListener {
+            dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE)
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val value = ShellConfig.save(this@MainActivity, input.text.toString())
+                if (value == null) {
+                    input.error = "请输入有效的 https:// 地址"
+                    return@setOnClickListener
+                }
+                siteUrl = value
+                siteErrorShown = false
+                dialog.dismiss()
+                webView.loadUrl(value)
+                ensurePushService()
+            }
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener {
+                dialog.dismiss()
+                if (exitOnCancel) finish()
+            }
+        }
+        dialog.setOnDismissListener {
+            if (siteSetupDialog === dialog) siteSetupDialog = null
+        }
+        dialog.show()
+    }
+
+    /** 主文档加载失败（DNS/断网/地址写错）时给出重试或改地址的出口。 */
+    private fun showSiteError(description: String) {
+        val current = siteUrl
+        if (current == null) {
+            showSiteSetup(exitOnCancel = true)
+            return
+        }
+        if (isFinishing || isDestroyed || siteSetupDialog?.isShowing == true) return
+        val detail = description.ifBlank { "网络错误" }
+        AlertDialog.Builder(this)
+            .setTitle("打不开站点")
+            .setMessage("无法加载 $current\n\n$detail\n\n请检查网络，或修改站点地址。")
+            .setPositiveButton("重试") { _, _ ->
+                siteErrorShown = false
+                webView.loadUrl(current)
+            }
+            .setNegativeButton("修改地址") { _, _ ->
+                showSiteSetup(exitOnCancel = false)
+            }
+            .setCancelable(true)
+            .show()
     }
 
     private fun ensurePushService() {
+        if (siteUrl == null) return
         if (Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
             != PackageManager.PERMISSION_GRANTED
@@ -302,6 +434,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        siteSetupDialog?.dismiss()
+        siteSetupDialog = null
         synchronized(saveLock) { abortPendingSaveLocked() }
         CookieManager.getInstance().flush()
         webView.destroy()

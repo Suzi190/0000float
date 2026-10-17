@@ -122,7 +122,8 @@ class IncomingCallActivity : AppCompatActivity() {
     private fun answer(sessionId: String, callTs: Long) {
         CallAlert.stop(this)
         val ts = if (callTs > 0) callTs else System.currentTimeMillis()
-        val target = "${MainActivity.SITE_URL}/#incoming-call=${android.net.Uri.encode(sessionId)}&rt=$ts&answered=1"
+        val siteUrl = ShellConfig.resolve(this) ?: run { finish(); return }
+        val target = "$siteUrl/#incoming-call=${android.net.Uri.encode(sessionId)}&rt=$ts&answered=1"
         val launch = Intent(this, MainActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             putExtra(MainActivity.EXTRA_OPEN_URL, target)
