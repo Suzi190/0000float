@@ -115,6 +115,13 @@
     var inset = Math.max(0, Math.round(rect.bottom - visibleBottom));
     if (inset < 24) inset = 0;
     root.style.setProperty("--shell-keyboard-inset", inset + "px");
+    // 站点若配置了 CSP 限制内联 <style>，上面的样式表可能不生效；
+    // 直接写输入栏的 bottom 作为兜底（CSSOM 不受 style-src 限制）。
+    var bar = document.querySelector(".chat-input-bar");
+    if (bar) {
+      if (inset > 0) bar.style.setProperty("bottom", inset + "px", "important");
+      else bar.style.removeProperty("bottom");
+    }
   }
 
   function scheduleKeyboardInset() {
