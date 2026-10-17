@@ -31,12 +31,12 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK packages
-        run: |
-          yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager "platforms;android-34" "build-tools;34.0.0"
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          # 让 action 用它自带的 sdkmanager 安装，避免 runner 上新旧 CLI
+          # 对 package 分隔符（; vs /）解析不一致。
+          packages: "platform-tools platforms;android-34 build-tools;34.0.0"
 
       - uses: gradle/actions/setup-gradle@v3
         with:
