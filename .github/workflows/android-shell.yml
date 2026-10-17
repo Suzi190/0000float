@@ -9,7 +9,9 @@ on:
         type: string
   push:
     branches: [main]
-    paths: ["android-shell/**", ".github/workflows/android-shell.yml"]
+    paths:
+      - "ai-virtual-phone-main/android-shell/**"
+      - ".github/workflows/android-shell.yml"
 
 jobs:
   build:
@@ -29,9 +31,23 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "platforms;android-34" "build-tools;34.0.0"
+
       - uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: "8.7"
+
+      - name: Check site URL
+        run: |
+          if [ -z "$SHELL_SITE_URL" ]; then
+            echo "::error::请先在仓库 Variables 配置 SHELL_SITE_URL，或手动运行工作流时填写 site_url"
+            exit 1
+          fi
 
       - name: Decode keystore (optional)
         if: ${{ env.SHELL_KEYSTORE_BASE64 != '' }}
@@ -40,16 +56,18 @@ jobs:
           echo "SHELL_KEYSTORE_FILE=/tmp/shell.keystore" >> "$GITHUB_ENV"
 
       - name: Build APKs
-        run: gradle -p android-shell assembleDebug assembleRelease
+        run: gradle -p ai-virtual-phone-main/android-shell assembleDebug assembleRelease
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
           name: float-shell-debug
-          path: android-shell/app/build/outputs/apk/debug/app-debug.apk
+          path: ai-virtual-phone-main/android-shell/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
 
       - name: Upload release APK
         uses: actions/upload-artifact@v4
         with:
           name: float-shell-release
-          path: android-shell/app/build/outputs/apk/release/*.apk
+          path: ai-virtual-phone-main/android-shell/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
